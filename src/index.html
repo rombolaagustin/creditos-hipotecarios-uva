@@ -102,8 +102,72 @@ const TABS = [
   { id: 'simulador', label: 'Simulador' },
   { id: 'amortizacion', label: 'Amortización' },
   { id: 'bancos', label: 'Bancos', soon: true },
-  { id: 'inflacion', label: 'Inflación y TC', soon: true },
+  { id: 'inflacion', label: 'Inflación y tipo de cambio' },
 ];
+
+/* ─── Historical UVA ─── */
+function useHistoricalUVA() {
+  const [data, setData] = useState({ series: [], loading: true, error: null });
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const BASE = 'https://api.bcra.gob.ar/estadisticas/v4.0/Monetarias/31';
+        const [r1, r2] = await Promise.all([
+          fetch(`${BASE}?limit=3000`).then(r => r.json()),
+          fetch(`${BASE}?limit=1000&offset=3000`).then(r => r.json()),
+        ]);
+        if (cancelled) return;
+        const today = new Date().toISOString().split('T')[0];
+        const all = [
+          ...(r1?.results?.[0]?.detalle || []),
+          ...(r2?.results?.[0]?.detalle || []),
+        ].filter(d => d.fecha <= today).sort((a, b) => a.fecha.localeCompare(b.fecha));
+        if (!all.length) throw new Error();
+        const byMonth = {};
+        all.forEach(d => { const ym = d.fecha.slice(0, 7); if (!byMonth[ym]) byMonth[ym] = { ym, valor: d.valor }; });
+        const series = Object.values(byMonth).sort((a, b) => a.ym.localeCompare(b.ym));
+        setData({ series, loading: false, error: null });
+      } catch(e) {
+        if (!cancelled) setData({ series: [], loading: false, error: 'Datos históricos no disponibles' });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  return data;
+}
+
+/* ─── Historical TC ─── */
+function useHistoricalTC() {
+  const [data, setData] = useState({ series: [], loading: true, error: null });
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const BASE = 'https://api.bcra.gob.ar/estadisticas/v4.0/Monetarias/5';
+        const [r1, r2] = await Promise.all([
+          fetch(`${BASE}?limit=3000`).then(r => r.json()),
+          fetch(`${BASE}?limit=3000&offset=3000`).then(r => r.json()),
+        ]);
+        if (cancelled) return;
+        const today = new Date().toISOString().split('T')[0];
+        const all = [
+          ...(r1?.results?.[0]?.detalle || []),
+          ...(r2?.results?.[0]?.detalle || []),
+        ].filter(d => d.fecha <= today).sort((a, b) => a.fecha.localeCompare(b.fecha));
+        if (!all.length) throw new Error();
+        const byMonth = {};
+        all.forEach(d => { const ym = d.fecha.slice(0, 7); if (!byMonth[ym]) byMonth[ym] = { ym, valor: d.valor }; });
+        const series = Object.values(byMonth).sort((a, b) => a.ym.localeCompare(b.ym));
+        setData({ series, loading: false, error: null });
+      } catch(e) {
+        if (!cancelled) setData({ series: [], loading: false, error: 'Datos históricos no disponibles' });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  return data;
+}
 
 /* ─── French Amortization ─── */
 function calcFrench(capitalUVA, tna, months) {
@@ -136,21 +200,26 @@ function useTheme() {
 
 /* ─── API ─── */
 function useRates() {
-  const [rates, setRates] = useState({ uva: null, usdOficial: null, loading: true, error: null });
+  const [rates, setRates] = useState({ uva: null, usdOficial: null, fecha: null, loading: true, error: null });
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const dolarRes = await fetch('https://dolarapi.com/v1/dolares/oficial').then(r => r.json());
-        let uvaValue = null;
-        try {
-          const uvaRes = await fetch('https://api.bcra.gob.ar/estadisticas/v3.0/Monetarias/UVA');
-          if (uvaRes.ok) { const d = await uvaRes.json(); if (d?.results?.length) uvaValue = d.results[d.results.length - 1].valor; }
-        } catch(e) {}
-        if (!cancelled) setRates({ uva: uvaValue || 1450, usdOficial: dolarRes?.venta || 1200, loading: false, error: uvaValue ? null : 'UVA: valor estimado (API no disponible)' });
-      } catch(e) {
-        if (!cancelled) setRates({ uva: 1450, usdOficial: 1200, loading: false, error: 'APIs no disponibles — valores estimados' });
-      }
+      const safeFetch = async (url) => { try { const r = await fetch(url); return r.ok ? r.json() : null; } catch(e) { return null; } };
+      const [uvaRes, tcRes] = await Promise.all([
+        safeFetch('https://api.bcra.gob.ar/estadisticas/v4.0/Monetarias/31?limit=30'),
+        safeFetch('https://api.bcra.gob.ar/estadisticas/v4.0/Monetarias/5?limit=30'),
+      ]);
+      const FALLBACK = { uva: 1908.11, usdOficial: 1412.9865, fecha: '27 abr 2026' };
+      const today = new Date().toISOString().split('T')[0];
+      const latestEntry = (res) => (res?.results?.[0]?.detalle || []).find(d => d.fecha <= today) || null;
+      const uvaEntry = latestEntry(uvaRes);
+      const tcEntry = latestEntry(tcRes);
+      const uvaValue = uvaEntry?.valor || null;
+      const tcValue = tcEntry?.valor || null;
+      const fechaRaw = uvaEntry?.fecha || null;
+      const fecha = fechaRaw ? new Intl.DateTimeFormat('es-AR', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(fechaRaw + 'T12:00:00')) : FALLBACK.fecha;
+      const errors = [...(!uvaValue ? ['UVA'] : []), ...(!tcValue ? ['TC Oficial'] : [])];
+      if (!cancelled) setRates({ uva: uvaValue || FALLBACK.uva, usdOficial: tcValue || FALLBACK.usdOficial, fecha, loading: false, error: errors.length ? `${errors.join(' y ')} con valor estimado al ${FALLBACK.fecha} — API del BCRA no disponible` : null });
     })();
     return () => { cancelled = true; };
   }, []);
@@ -273,8 +342,8 @@ function AmortChart({ schedule, valorUVA }) {
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, padding: '0 4px' }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>Composición de la cuota</div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Sistema francés — evolución en el tiempo</div>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>Composición de la cuota <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)' }}>en UVAs</span></div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Sistema francés — evolución en el tiempo · eje Y en UVAs</div>
         </div>
         <div style={{ display: 'flex', gap: 16 }}>
           <span style={{ fontSize: 11, color: 'var(--green)', display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -467,6 +536,185 @@ function AmortTable({ schedule, valorUVA }) {
   );
 }
 
+/* ─── Variation Bar Chart ─── */
+function VariationBarChart({ data, title, subtitle, from, setFrom, to, setTo, minYM, maxYM, showLegend }) {
+  const W = 800, H = 200;
+  const PAD = { top: 20, right: 16, bottom: 36, left: 52 };
+  const cW = W - PAD.left - PAD.right, cH = H - PAD.top - PAD.bottom;
+  const [tooltip, setTooltip] = useState(null);
+
+  const inputS = {
+    background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 6,
+    padding: '4px 8px', color: 'var(--text)', fontSize: 11, fontFamily: 'var(--font)',
+    outline: 'none', cursor: 'pointer', colorScheme: 'dark',
+  };
+
+  const inner = data.length ? (() => {
+    const maxV = Math.max(...data.map(d => d.value), 0.1);
+    const minV = Math.min(...data.map(d => d.value), 0);
+    const range = maxV - minV || 1;
+    const yS = v => PAD.top + cH - ((v - minV) / range) * cH;
+    const yZero = yS(0);
+    const barW = Math.max(2, Math.floor(cW / data.length) - 1);
+    const labelEvery = Math.max(1, Math.ceil(data.length / 14));
+    const rawStep = range / 4;
+    const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const step = Math.ceil(rawStep / mag) * mag;
+    const ticks = [];
+    for (let v = Math.floor(minV / step) * step; v <= maxV + step * 0.1; v += step) ticks.push(Math.round(v * 100) / 100);
+    return { maxV, minV, yS, yZero, barW, labelEvery, ticks };
+  })() : null;
+
+  const TW = 110, TH = 42;
+
+  return (
+    <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', padding: '20px 16px 12px', marginTop: 20 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>{title}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{subtitle}</div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Desde</span>
+          <input type="month" value={from} min={minYM} max={to} onChange={e => setFrom(e.target.value)} style={inputS} />
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>hasta</span>
+          <input type="month" value={to} min={from} max={maxYM} onChange={e => setTo(e.target.value)} style={inputS} />
+        </div>
+      </div>
+      {!inner ? (
+        <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--text-muted)', fontSize: 12 }}>Sin datos para el rango seleccionado</div>
+      ) : (
+        <>
+          <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }}
+            onMouseLeave={() => setTooltip(null)}>
+            {inner.ticks.map((v, i) => (
+              <g key={i}>
+                <line x1={PAD.left} y1={inner.yS(v)} x2={W - PAD.right} y2={inner.yS(v)} stroke="var(--border)" strokeWidth={v === 0 ? 1 : 0.5} strokeDasharray={v === 0 ? '' : '2,3'} />
+                <text x={PAD.left - 5} y={inner.yS(v) + 3} textAnchor="end" fill="var(--text-muted)" fontSize="9" fontFamily="var(--mono)">{fmt(v, 1)}%</text>
+              </g>
+            ))}
+            {data.map((d, i) => {
+              const cx = PAD.left + (i + 0.5) * (cW / data.length);
+              const x = cx - inner.barW / 2;
+              const pos = d.value >= 0;
+              const y = pos ? inner.yS(d.value) : inner.yZero;
+              const h = Math.max(1, Math.abs(inner.yS(d.value) - inner.yZero));
+              const tx = Math.min(Math.max(cx - TW / 2, PAD.left), W - PAD.right - TW);
+              const ty = pos ? Math.max(inner.yS(d.value) - TH - 8, PAD.top) : inner.yZero + 8;
+              return (
+                <g key={i}
+                  onMouseEnter={() => setTooltip({ i, tx, ty, value: d.value, label: d.label, pos })}
+                  style={{ cursor: 'crosshair' }}>
+                  <rect x={x} y={y} width={inner.barW} height={h}
+                    fill={pos ? 'var(--cyan)' : 'var(--red)'}
+                    opacity={tooltip && tooltip.i === i ? 1 : 0.85} rx="1" />
+                  {/* invisible wider hit area */}
+                  <rect x={cx - Math.max(inner.barW, 6) / 2} y={PAD.top} width={Math.max(inner.barW, 6)} height={cH} fill="transparent" />
+                </g>
+              );
+            })}
+            {data.map((d, i) => {
+              if (i % inner.labelEvery !== 0) return null;
+              return <text key={i} x={PAD.left + (i + 0.5) * (cW / data.length)} y={H - 4} textAnchor="middle" fill="var(--text-muted)" fontSize="9" fontFamily="var(--font)">{d.label}</text>;
+            })}
+            {tooltip && (
+              <g style={{ pointerEvents: 'none' }}>
+                <rect x={tooltip.tx} y={tooltip.ty} width={TW} height={TH} rx="5"
+                  fill="var(--bg-elevated)" stroke="var(--border)" strokeWidth="1"
+                  style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.3))' }} />
+                <text x={tooltip.tx + TW / 2} y={tooltip.ty + 15} textAnchor="middle"
+                  fill="var(--text-muted)" fontSize="9" fontFamily="var(--font)">{tooltip.label}</text>
+                <text x={tooltip.tx + TW / 2} y={tooltip.ty + 31} textAnchor="middle"
+                  fill={tooltip.pos ? 'var(--cyan)' : 'var(--red)'} fontSize="13" fontWeight="700" fontFamily="var(--mono)">
+                  {tooltip.pos ? '+' : ''}{fmt(tooltip.value, 2)}%
+                </text>
+              </g>
+            )}
+          </svg>
+          {showLegend && (
+            <div style={{ display: 'flex', gap: 16, marginTop: 6, justifyContent: 'flex-end' }}>
+              <span style={{ fontSize: 10, color: 'var(--cyan)', display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--cyan)' }}></span> Sube</span>
+              <span style={{ fontSize: 10, color: 'var(--red)', display: 'flex', alignItems: 'center', gap: 4 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--red)' }}></span> Baja</span>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ─── Inflacion Tab ─── */
+function InflacionTab() {
+  const uva = useHistoricalUVA();
+  const tc = useHistoricalTC();
+  const MONTHS = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const now = () => new Date().toISOString().slice(0, 7);
+  const minus3Y = () => { const d = new Date(); d.setFullYear(d.getFullYear() - 3); return d.toISOString().slice(0, 7); };
+
+  const [uvaMFrom, setUvaMFrom] = useState(minus3Y);
+  const [uvaMTo, setUvaMTo] = useState(now);
+  const [uvaAFrom, setUvaAFrom] = useState('2016-03');
+  const [uvaATo, setUvaATo] = useState(now);
+  const [tcMFrom, setTcMFrom] = useState(minus3Y);
+  const [tcMTo, setTcMTo] = useState(now);
+  const [tcAFrom, setTcAFrom] = useState('2016-01');
+  const [tcATo, setTcATo] = useState(now);
+
+  const fmtLabel = ym => { const [y, m] = ym.split('-'); return `${MONTHS[parseInt(m) - 1]} ${y.slice(2)}`; };
+
+  const buildMonthly = (series, from, to) => {
+    const f = series.filter(s => s.ym >= from && s.ym <= to);
+    return f.slice(1).map((s, i) => ({ label: fmtLabel(s.ym), value: ((s.valor - f[i].valor) / f[i].valor) * 100 }));
+  };
+  const buildAnnual = (series, from, to) => {
+    const f = series.filter(s => s.ym >= from && s.ym <= to);
+    return f.map(s => {
+      const prev = series.find(p => p.ym === `${parseInt(s.ym.slice(0, 4)) - 1}${s.ym.slice(4)}`);
+      return prev ? { label: fmtLabel(s.ym), value: ((s.valor - prev.valor) / prev.valor) * 100 } : null;
+    }).filter(Boolean);
+  };
+
+  const uvaMonthly = useMemo(() => buildMonthly(uva.series, uvaMFrom, uvaMTo), [uva.series, uvaMFrom, uvaMTo]);
+  const uvaAnnual  = useMemo(() => buildAnnual(uva.series, uvaAFrom, uvaATo),   [uva.series, uvaAFrom, uvaATo]);
+  const tcMonthly  = useMemo(() => buildMonthly(tc.series, tcMFrom, tcMTo),      [tc.series, tcMFrom, tcMTo]);
+  const tcAnnual   = useMemo(() => buildAnnual(tc.series, tcAFrom, tcATo),       [tc.series, tcAFrom, tcATo]);
+
+  const uvaMinYM = uva.series[0]?.ym || '2016-03';
+  const uvaMaxYM = uva.series[uva.series.length - 1]?.ym || now();
+  const tcMinYM  = tc.series[0]?.ym  || '2016-01';
+  const tcMaxYM  = tc.series[tc.series.length - 1]?.ym  || now();
+
+  const loading = uva.loading || tc.loading;
+
+  if (loading) return (
+    <div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)' }}>
+      <div style={{ fontSize: 20, marginBottom: 12, animation: 'pulse 1.5s ease infinite' }}>◉</div>
+      Cargando datos históricos...
+    </div>
+  );
+
+  return (
+    <div style={{ animation: 'fadeIn 0.3s ease forwards' }}>
+      <div style={{ marginBottom: 28 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, letterSpacing: '-0.02em' }}>Inflación y tipo de cambio</h2>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>Evolución histórica · primeros de mes · fuente: BCRA</p>
+      </div>
+
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4, letterSpacing: '0.02em' }}>UVA</div>
+      <VariationBarChart data={uvaMonthly} title="Variación mensual UVA" subtitle="Variación % respecto al mes anterior"
+        from={uvaMFrom} setFrom={setUvaMFrom} to={uvaMTo} setTo={setUvaMTo} minYM={uvaMinYM} maxYM={uvaMaxYM} />
+      <VariationBarChart data={uvaAnnual} title="Variación anual UVA" subtitle="Variación % respecto al mismo mes del año anterior"
+        from={uvaAFrom} setFrom={setUvaAFrom} to={uvaATo} setTo={setUvaATo} minYM={uvaMinYM} maxYM={uvaMaxYM} />
+
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginTop: 32, marginBottom: 4, letterSpacing: '0.02em' }}>Tipo de cambio oficial (COM A3500)</div>
+      <VariationBarChart data={tcMonthly} title="Variación mensual tipo de cambio oficial" subtitle="Variación % respecto al mes anterior"
+        from={tcMFrom} setFrom={setTcMFrom} to={tcMTo} setTo={setTcMTo} minYM={tcMinYM} maxYM={tcMaxYM} showLegend />
+      <VariationBarChart data={tcAnnual} title="Variación anual tipo de cambio oficial" subtitle="Variación % respecto al mismo mes del año anterior"
+        from={tcAFrom} setFrom={setTcAFrom} to={tcATo} setTo={setTcATo} minYM={tcMinYM} maxYM={tcMaxYM} showLegend />
+    </div>
+  );
+}
+
 /* ─── App ─── */
 function App() {
   const [dark, setDark] = useTheme();
@@ -523,12 +771,15 @@ function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {!rates.loading && (
             <div style={{
-              display: 'flex', gap: 10, fontSize: 11, fontFamily: 'var(--mono)',
+              display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3,
               background: 'var(--bg-input)', borderRadius: 6, padding: '5px 10px', border: '1px solid var(--border)',
             }}>
-              <span>UVA <span style={{ color: 'var(--cyan)', fontWeight: 600 }}>{fmtARS(rates.uva)}</span></span>
-              <span style={{ color: 'var(--border)' }}>|</span>
-              <span>USD <span style={{ color: 'var(--green)', fontWeight: 600 }}>{fmtARS(rates.usdOficial)}</span></span>
+              <div style={{ display: 'flex', gap: 10, fontSize: 11, fontFamily: 'var(--mono)' }}>
+                <span>UVA <span style={{ color: 'var(--cyan)', fontWeight: 600 }}>{fmtARS(rates.uva)}</span></span>
+                <span style={{ color: 'var(--border)' }}>|</span>
+                <span>TC Oficial <span style={{ color: 'var(--green)', fontWeight: 600 }}>{fmtARS(rates.usdOficial)}</span></span>
+              </div>
+              {rates.fecha && <div style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.03em' }}>Dato al {rates.fecha}</div>}
             </div>
           )}
           <button onClick={() => setDark(!dark)} style={{
@@ -570,6 +821,8 @@ function App() {
             </div>
             <AmortChart schedule={calc.schedule} valorUVA={calc.valorUVA} />
           </div>
+        ) : tab === 'inflacion' ? (
+          <InflacionTab />
         ) : null}
       </main>
 
@@ -577,7 +830,7 @@ function App() {
         textAlign: 'center', padding: '14px 20px', fontSize: 11, color: 'var(--text-muted)',
         borderTop: '1px solid var(--border)', background: 'var(--bg-elevated)',
       }}>
-        Simulación con fines informativos · Valores UVA y tipo de cambio del BCRA y DolarAPI · Los montos en pesos están a valor UVA del día
+        Simulación con fines informativos · Valores UVA y tipo de cambio oficial obtenidos de la API pública del BCRA · Los montos en pesos están a valor UVA del día
         <div style={{ marginTop: 6 }}>Desarrollado por <a href="https://github.com/rombolaagustin" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)', textDecoration: 'none', fontWeight: 500 }}>@rombolaagustin</a></div>
       </footer>
     </div>
@@ -631,7 +884,7 @@ function SimuladorTab({ tna, setTna, valorUSD, setValorUSD, anticipo, setAnticip
           <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', padding: '16px 18px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
             <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 12 }}>Resumen rápido</div>
             {[
-              ['Tipo de cambio', `${fmtARS(calc.tipoCambio)} / USD`],
+              ['TC oficial (COM A3500)', `${fmtARS(calc.tipoCambio)} / USD`],
               ['Valor UVA', fmtARS(calc.valorUVA)],
               ['Cuotas totales', `${calc.schedule.length} meses`],
               ['Primera cuota (UVA)', fmt(calc.cuotaUVA, 4)],
