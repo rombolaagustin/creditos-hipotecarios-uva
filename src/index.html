@@ -198,6 +198,18 @@ function useTheme() {
   return [dark, setDark];
 }
 
+/* ─── Mobile ─── */
+function useIsMobile() {
+  const [mobile, setMobile] = useState(() => window.innerWidth <= 640);
+  useEffect(() => {
+    let t;
+    const debounced = () => { clearTimeout(t); t = setTimeout(() => setMobile(window.innerWidth <= 640), 100); };
+    window.addEventListener('resize', debounced);
+    return () => window.removeEventListener('resize', debounced);
+  }, []);
+  return mobile;
+}
+
 /* ─── API ─── */
 function useRates() {
   const [rates, setRates] = useState({ uva: null, usdOficial: null, fecha: null, loading: true, error: null });
@@ -224,6 +236,26 @@ function useRates() {
     return () => { cancelled = true; };
   }, []);
   return rates;
+}
+
+/* ─── Rates Bar (mobile only) ─── */
+function RatesBar({ rates }) {
+  return (
+    <div style={{
+      padding: '8px 16px', background: 'var(--bg-elevated)',
+      borderBottom: '1px solid var(--border)',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+    }}>
+      <div style={{ display: 'flex', gap: 10, fontSize: 11, fontFamily: 'var(--mono)' }}>
+        <span>UVA <span style={{ color: 'var(--cyan)', fontWeight: 600 }}>{fmtARS(rates.uva)}</span></span>
+        <span style={{ color: 'var(--border)' }}>|</span>
+        <span>TC Oficial <span style={{ color: 'var(--green)', fontWeight: 600 }}>{fmtARS(rates.usdOficial)}</span></span>
+      </div>
+      {rates.fecha && (
+        <div style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.03em' }}>Dato al {rates.fecha}</div>
+      )}
+    </div>
+  );
 }
 
 /* ─── Dual Input (Slider + Number) ─── */
@@ -470,7 +502,23 @@ function HeroMetric({ label, value, sub }) {
 }
 
 /* ─── Tab Bar ─── */
-function TabBar({ active, setActive }) {
+function TabBar({ active, setActive, isMobile }) {
+  if (isMobile) {
+    return (
+      <div style={{ marginBottom: 20 }}>
+        <select value={active} onChange={e => setActive(e.target.value)} style={{
+          width: '100%', background: 'var(--bg-input)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-sm)', padding: '10px 12px', color: 'var(--text)',
+          fontSize: 14, fontFamily: 'var(--font)', outline: 'none', cursor: 'pointer',
+          colorScheme: 'dark', appearance: 'auto',
+        }}>
+          {TABS.filter(t => !t.soon).map(t => (
+            <option key={t.id} value={t.id}>{t.label}</option>
+          ))}
+        </select>
+      </div>
+    );
+  }
   return (
     <nav style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)', marginBottom: 28 }}>
       {TABS.map(t => {
@@ -537,7 +585,7 @@ function AmortTable({ schedule, valorUVA }) {
 }
 
 /* ─── Variation Bar Chart ─── */
-function VariationBarChart({ data, title, subtitle, from, setFrom, to, setTo, minYM, maxYM, showLegend }) {
+function VariationBarChart({ data, title, subtitle, from, setFrom, to, setTo, minYM, maxYM, showLegend, isMobile }) {
   const W = 800, H = 200;
   const PAD = { top: 20, right: 16, bottom: 36, left: 52 };
   const cW = W - PAD.left - PAD.right, cH = H - PAD.top - PAD.bottom;
@@ -569,16 +617,16 @@ function VariationBarChart({ data, title, subtitle, from, setFrom, to, setTo, mi
 
   return (
     <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', padding: '20px 16px 12px', marginTop: 20 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+      <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, gap: 12 }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 600 }}>{title}</div>
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{subtitle}</div>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', width: isMobile ? '100%' : 'auto' }}>
           <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Desde</span>
-          <input type="month" value={from} min={minYM} max={to} onChange={e => setFrom(e.target.value)} style={inputS} />
+          <input type="month" value={from} min={minYM} max={to} onChange={e => setFrom(e.target.value)} style={{ ...inputS, ...(isMobile ? { flex: 1 } : {}) }} />
           <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>hasta</span>
-          <input type="month" value={to} min={from} max={maxYM} onChange={e => setTo(e.target.value)} style={inputS} />
+          <input type="month" value={to} min={from} max={maxYM} onChange={e => setTo(e.target.value)} style={{ ...inputS, ...(isMobile ? { flex: 1 } : {}) }} />
         </div>
       </div>
       {!inner ? (
@@ -644,7 +692,7 @@ function VariationBarChart({ data, title, subtitle, from, setFrom, to, setTo, mi
 }
 
 /* ─── Inflacion Tab ─── */
-function InflacionTab() {
+function InflacionTab({ isMobile }) {
   const uva = useHistoricalUVA();
   const tc = useHistoricalTC();
   const MONTHS = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
@@ -702,15 +750,15 @@ function InflacionTab() {
 
       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4, letterSpacing: '0.02em' }}>UVA</div>
       <VariationBarChart data={uvaMonthly} title="Variación mensual UVA" subtitle="Variación % respecto al mes anterior"
-        from={uvaMFrom} setFrom={setUvaMFrom} to={uvaMTo} setTo={setUvaMTo} minYM={uvaMinYM} maxYM={uvaMaxYM} />
+        from={uvaMFrom} setFrom={setUvaMFrom} to={uvaMTo} setTo={setUvaMTo} minYM={uvaMinYM} maxYM={uvaMaxYM} isMobile={isMobile} />
       <VariationBarChart data={uvaAnnual} title="Variación anual UVA" subtitle="Variación % respecto al mismo mes del año anterior"
-        from={uvaAFrom} setFrom={setUvaAFrom} to={uvaATo} setTo={setUvaATo} minYM={uvaMinYM} maxYM={uvaMaxYM} />
+        from={uvaAFrom} setFrom={setUvaAFrom} to={uvaATo} setTo={setUvaATo} minYM={uvaMinYM} maxYM={uvaMaxYM} isMobile={isMobile} />
 
       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginTop: 32, marginBottom: 4, letterSpacing: '0.02em' }}>Tipo de cambio oficial (COM A3500)</div>
       <VariationBarChart data={tcMonthly} title="Variación mensual tipo de cambio oficial" subtitle="Variación % respecto al mes anterior"
-        from={tcMFrom} setFrom={setTcMFrom} to={tcMTo} setTo={setTcMTo} minYM={tcMinYM} maxYM={tcMaxYM} showLegend />
+        from={tcMFrom} setFrom={setTcMFrom} to={tcMTo} setTo={setTcMTo} minYM={tcMinYM} maxYM={tcMaxYM} showLegend isMobile={isMobile} />
       <VariationBarChart data={tcAnnual} title="Variación anual tipo de cambio oficial" subtitle="Variación % respecto al mismo mes del año anterior"
-        from={tcAFrom} setFrom={setTcAFrom} to={tcATo} setTo={setTcATo} minYM={tcMinYM} maxYM={tcMaxYM} showLegend />
+        from={tcAFrom} setFrom={setTcAFrom} to={tcATo} setTo={setTcATo} minYM={tcMinYM} maxYM={tcMaxYM} showLegend isMobile={isMobile} />
     </div>
   );
 }
@@ -720,6 +768,7 @@ function App() {
   const [dark, setDark] = useTheme();
   const [tab, setTab] = useState('simulador');
   const rates = useRates();
+  const isMobile = useIsMobile();
 
   const [tna, setTna] = useState(6.5);
   const [valorUSD, setValorUSD] = useState(100000);
@@ -769,7 +818,7 @@ function App() {
           <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 4 }}>Simulador Hipotecario</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {!rates.loading && (
+          {!rates.loading && !isMobile && (
             <div style={{
               display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3,
               background: 'var(--bg-input)', borderRadius: 6, padding: '5px 10px', border: '1px solid var(--border)',
@@ -790,14 +839,16 @@ function App() {
         </div>
       </header>
 
+      {isMobile && !rates.loading && <RatesBar rates={rates} />}
+
       {rates.error && (
         <div style={{ margin: '12px 28px 0', padding: '8px 14px', borderRadius: 8, background: 'var(--amber-dim)', border: '1px solid rgba(251,191,36,0.15)', fontSize: 12, color: 'var(--amber)' }}>
           ⚠ {rates.error}
         </div>
       )}
 
-      <main style={{ maxWidth: 1080, width: '100%', margin: '0 auto', padding: '20px 28px 60px', position: 'relative', zIndex: 1, flex: 1 }}>
-        <TabBar active={tab} setActive={setTab} />
+      <main style={{ maxWidth: 1080, width: '100%', margin: '0 auto', padding: isMobile ? '16px 16px 60px' : '20px 28px 60px', position: 'relative', zIndex: 1, flex: 1 }}>
+        <TabBar active={tab} setActive={setTab} isMobile={isMobile} />
 
         {rates.loading ? (
           <div style={{ textAlign: 'center', padding: 80, color: 'var(--text-muted)' }}>
@@ -807,7 +858,7 @@ function App() {
         ) : tab === 'simulador' ? (
           <SimuladorTab tna={tna} setTna={setTna} valorUSD={valorUSD} setValorUSD={setValorUSD}
             anticipo={anticipo} setAnticipo={setAnticipo} maxCuota={maxCuota} setMaxCuota={setMaxCuota}
-            plazo={plazo} setPlazo={setPlazo} calc={calc} />
+            plazo={plazo} setPlazo={setPlazo} calc={calc} isMobile={isMobile} />
         ) : tab === 'amortizacion' ? (
           <div style={{ animation: 'fadeIn 0.3s ease forwards' }}>
             <div style={{ marginBottom: 20 }}>
@@ -822,7 +873,7 @@ function App() {
             <AmortChart schedule={calc.schedule} valorUVA={calc.valorUVA} />
           </div>
         ) : tab === 'inflacion' ? (
-          <InflacionTab />
+          <InflacionTab isMobile={isMobile} />
         ) : null}
       </main>
 
@@ -838,13 +889,13 @@ function App() {
 }
 
 /* ─── Simulador Tab ─── */
-function SimuladorTab({ tna, setTna, valorUSD, setValorUSD, anticipo, setAnticipo, maxCuota, setMaxCuota, plazo, setPlazo, calc }) {
+function SimuladorTab({ tna, setTna, valorUSD, setValorUSD, anticipo, setAnticipo, maxCuota, setMaxCuota, plazo, setPlazo, calc, isMobile }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '340px 1fr', gap: 24, alignItems: 'start', animation: 'fadeIn 0.3s ease forwards' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '340px 1fr', gap: 24, alignItems: 'start', animation: 'fadeIn 0.3s ease forwards' }}>
       {/* Left: Inputs */}
       <div style={{
         background: 'var(--bg-card)', borderRadius: 'var(--radius)', border: '1px solid var(--border)',
-        padding: '24px 22px', position: 'sticky', top: 72,
+        padding: '24px 22px', position: isMobile ? 'static' : 'sticky', top: 72,
       }}>
         <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 2 }}>Parámetros</div>
         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 24 }}>Ajustá los valores o hacé click para editar</div>
@@ -864,7 +915,7 @@ function SimuladorTab({ tna, setTna, valorUSD, setValorUSD, anticipo, setAnticip
       {/* Right: Dashboard */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {/* Top row: hero metrics */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14 }}>
           <HeroMetric label="Salario neto mínimo requerido" value={fmtARS(calc.salarioMinimo)}
             sub={`Cuota no supera el ${maxCuota}% del ingreso`} />
           <HeroMetric label="Cuota mensual estimada" value={fmtARS(calc.cuotaARS)}
@@ -872,14 +923,14 @@ function SimuladorTab({ tna, setTna, valorUSD, setValorUSD, anticipo, setAnticip
         </div>
 
         {/* Metrics grid */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)', gap: 12 }}>
           <Metric label="Monto a financiar" value={fmtUSD(calc.montoUSD)} sub={fmtARS(calc.montoARS)} icon="$" color="var(--cyan)" />
           <Metric label="Anticipo requerido" value={fmtUSD(calc.anticipoUSD)} sub={fmtARS(calc.anticipoARS)} icon="↗" color="var(--green)" />
           <Metric label="Capital en UVAs" value={fmt(calc.montoUVAs, 0)} sub="unidades de valor" icon="◆" color="var(--accent)" />
         </div>
 
         {/* Donut + Chart */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14 }}>
           <DonutChart capital={calc.montoARS} interes={calc.interesTotal} />
           <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', padding: '16px 18px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
             <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 12 }}>Resumen rápido</div>
@@ -902,12 +953,6 @@ function SimuladorTab({ tna, setTna, valorUSD, setValorUSD, anticipo, setAnticip
         <AmortChart schedule={calc.schedule} valorUVA={calc.valorUVA} />
       </div>
 
-      <style>{`
-        @media (max-width: 800px) {
-          div[style*="grid-template-columns: 340px"] { grid-template-columns: 1fr !important; }
-          div[style*="grid-template-columns: repeat(3"] { grid-template-columns: 1fr 1fr !important; }
-        }
-      `}</style>
     </div>
   );
 }
